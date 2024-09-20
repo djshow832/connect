@@ -66,17 +66,21 @@ func main() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
+			db, err := sql.Open("mysql", path)
+			if err != nil {
+				panic(errors.Wrap(err, "open db fails"))
+			}
 			startTime := time.Now()
-			err := db.Ping()
+			err = db.Ping()
 			if err != nil {
 				fmt.Println("short connection fails", time.Now(), err)
-				<-ticker.C
-				continue
+			} else {
+				duration := time.Since(startTime)
+				if duration > 200*time.Millisecond {
+					fmt.Println("short connection too slow", time.Now(), duration)
+				}
 			}
-			duration := time.Since(startTime)
-			if duration > 100*time.Millisecond {
-				fmt.Println("short connection too slow", time.Now(), duration)
-			}
+			_ = db.Close()
 			<-ticker.C
 		}
 	}()
