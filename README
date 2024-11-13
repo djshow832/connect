@@ -1,0 +1,16 @@
+## Introduction
+
+This program is used to evaluate the effect of database change to client connections, including both long and short connections.
+
+It does 2 things:
+- Creates some long connections and pings the database in each connection periodically. It reports an error when ping fails or takes too long.
+- Creates short connections periodically. It reports an error when creating connection fails or takes too long.
+
+## Usage
+
+```shell
+go build
+./connect "root:12345678@tcp(127.0.0.1:4000)/test" 100
+```
+
+The last argument indicates the number of long connections.
