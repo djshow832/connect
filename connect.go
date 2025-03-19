@@ -18,12 +18,9 @@ func main() {
 	port := flag.Int("port", 4000, "mysql port")
 	user := flag.String("user", "root", "mysql user")
 	password := flag.String("password", "12345678", "mysql password")
-	path := fmt.Sprintf("%s:%s@tcp(%s:%d)/test", *user, *password, *host, *port)
 	conns := flag.Int("conns", 100, "number of long connections")
 	intervalMs := flag.Int("interval", 1000, "interval of short connections (ms)")
-	interval := time.Duration(*intervalMs) * time.Millisecond
 	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
-	slow := time.Duration(*slowThreshold) * time.Millisecond
 
 	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
@@ -32,6 +29,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	path := fmt.Sprintf("%s:%s@tcp(%s:%d)/test", *user, *password, *host, *port)
 	db, err := sql.Open("mysql", path)
 	if err != nil {
 		panic(errors.Wrap(err, "open db fails"))
@@ -42,6 +40,8 @@ func main() {
 	// long connnection
 	runLongConn(&wg, db, *conns)
 	// short connection
+	interval := time.Duration(*intervalMs) * time.Millisecond
+	slow := time.Duration(*slowThreshold) * time.Millisecond
 	runShortConn(&wg, path, interval, slow)
 	wg.Wait()
 }
