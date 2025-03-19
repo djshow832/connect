@@ -108,10 +108,8 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration)
 			}
 			curTime := time.Now()
 			if curTime.Sub(lastSummaryTime) > time.Second {
-				if errNum > 0 || slowNum > 0 {
-					fmt.Println(curTime.Format("15:04:05"), "err", errNum, "slow", slowNum)
-					errNum, slowNum = 0, 0
-				}
+				fmt.Println(curTime.Format("15:04:05"), "err", errNum, "slow", slowNum)
+				errNum, slowNum = 0, 0
 				lastSummaryTime = curTime
 			}
 			_ = db.Close()
