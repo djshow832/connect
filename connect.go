@@ -86,16 +86,34 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 
 func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
 	wg.Add(concurrency + 1)
-	var errNum atomic.Int32
+	var refused, timeout, deadline atomic.Int32
 	// print error num by second
 	go func() {
 		defer wg.Done()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		var sb strings.Builder
 		for {
-			num := errNum.Swap(0)
-			if num > 0 {
-				fmt.Println(time.Now().Format("15:04:05"), num)
+			shouldLog := false
+			sb.WriteString(time.Now().Format("15:04:05"))
+			refusedNum := refused.Load()
+			if refusedNum > 0 {
+				sb.WriteString(fmt.Sprintf(" refused %d", refusedNum))
+				shouldLog = true
+			}
+			timeoutNum := timeout.Load()
+			if timeoutNum > 0 {
+				sb.WriteString(fmt.Sprintf(" timeout %d", timeoutNum))
+				shouldLog = true
+			}
+			deadlineNum := deadline.Load()
+			if deadlineNum > 0 {
+				sb.WriteString(fmt.Sprintf(" deadline %d", deadlineNum))
+				shouldLog = true
+			}
+			if shouldLog {
+				fmt.Println(sb.String())
+				sb.Reset()
 			}
 			<-ticker.C
 		}
@@ -116,8 +134,15 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 				err = db.PingContext(ctx)
 				cancel()
 				if err != nil {
-					errNum.Add(1)
-					if !strings.Contains(strings.ToLower(err.Error()), "connection refused") {
+					errMsg := strings.ToLower(err.Error())
+					switch {
+					case strings.Contains(errMsg, "connection refused"):
+						refused.Add(1)
+					case strings.Contains(errMsg, "i/o timeout"):
+						timeout.Add(1)
+					case strings.Contains(errMsg, "deadline exceeded"):
+						deadline.Add(1)
+					default:
 						fmt.Println("short connection fail", time.Now(), err)
 					}
 				}
