@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,9 +89,9 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 	var errNum atomic.Int32
 	// print error num by second
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		defer wg.Done()
 		for {
 			num := errNum.Swap(0)
 			if num > 0 {
@@ -116,6 +117,9 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 				cancel()
 				if err != nil {
 					errNum.Add(1)
+					if !strings.Contains(strings.ToLower(err.Error()), "connection refused") {
+						fmt.Println("short connection fail", time.Now(), err)
+					}
 				}
 				_ = db.Close()
 				<-ticker.C
