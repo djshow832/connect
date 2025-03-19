@@ -14,13 +14,6 @@ import (
 )
 
 func main() {
-	help := flag.Bool("help", false, "show the usage")
-	flag.Parse()
-	if *help {
-		flag.Usage()
-		os.Exit(0)
-	}
-
 	host := flag.String("host", "127.0.0.1", "mysql host")
 	port := flag.Int("port", 4000, "mysql port")
 	user := flag.String("user", "root", "mysql user")
@@ -31,6 +24,13 @@ func main() {
 	interval := time.Duration(*intervalMs) * time.Millisecond
 	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
 	slow := time.Duration(*slowThreshold) * time.Millisecond
+
+	help := flag.Bool("help", false, "show the usage")
+	flag.Parse()
+	if *help {
+		flag.Usage()
+		os.Exit(0)
+	}
 
 	db, err := sql.Open("mysql", path)
 	if err != nil {

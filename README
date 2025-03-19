@@ -10,7 +10,6 @@ It does 2 things:
 
 ```shell
 go build
-./connect "root:12345678@tcp(127.0.0.1:4000)/test" 100
+./connect --help
+./connect --host="127.0.0.1" --port=4000 --conns=0 --interval=10
 ```
-
-The last argument indicates the number of long connections.
