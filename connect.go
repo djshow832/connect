@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -21,6 +22,7 @@ func main() {
 	conns := flag.Int("conns", 100, "number of long connections")
 	intervalMs := flag.Int("interval", 1000, "interval of short connections (ms)")
 	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
+	concurrency := flag.Int("concurrency", 1, "goroutines to create short connections")
 
 	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
@@ -42,7 +44,7 @@ func main() {
 	// short connection
 	interval := time.Duration(*intervalMs) * time.Millisecond
 	slow := time.Duration(*slowThreshold) * time.Millisecond
-	runShortConn(&wg, path, interval, slow)
+	runShortConn(&wg, path, interval, slow, *concurrency)
 	wg.Wait()
 }
 
@@ -81,39 +83,43 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 	}
 }
 
-func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration) {
-	wg.Add(1)
+func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
+	wg.Add(concurrency + 1)
+	var errNum atomic.Int32
+	// print error num by second
 	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		var errNum, slowNum int
-		var lastSummaryTime time.Time
+		defer wg.Done()
 		for {
-			db, err := sql.Open("mysql", path)
-			if err != nil {
-				panic(errors.Wrap(err, "open db fails"))
+			num := errNum.Swap(0)
+			if num > 0 {
+				fmt.Println(time.Now().Format("15:04:05"), num)
 			}
-			startTime := time.Now()
-			ctx, cancel := context.WithDeadline(context.Background(), startTime.Add(slow))
-			err = db.PingContext(ctx)
-			cancel()
-			if err != nil {
-				errNum++
-			} else {
-				duration := time.Since(startTime)
-				if duration > slow {
-					slowNum++
-				}
-			}
-			curTime := time.Now()
-			if curTime.Sub(lastSummaryTime) > time.Second {
-				fmt.Println(curTime.Format("15:04:05"), "err", errNum, "slow", slowNum)
-				errNum, slowNum = 0, 0
-				lastSummaryTime = curTime
-			}
-			_ = db.Close()
 			<-ticker.C
 		}
 	}()
+	// connect and increase error num
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				db, err := sql.Open("mysql", path)
+				if err != nil {
+					panic(errors.Wrap(err, "open db fails"))
+				}
+				startTime := time.Now()
+				ctx, cancel := context.WithDeadline(context.Background(), startTime.Add(slow))
+				err = db.PingContext(ctx)
+				cancel()
+				if err != nil {
+					errNum.Add(1)
+				}
+				_ = db.Close()
+				<-ticker.C
+			}
+		}()
+	}
 }
