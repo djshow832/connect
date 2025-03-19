@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -14,21 +14,41 @@ import (
 )
 
 func main() {
-	path := os.Args[1]
-	conns, err := strconv.ParseInt(os.Args[2], 10, 64)
-	if err != nil {
-		panic(err)
+	help := flag.Bool("help", false, "show the usage")
+	flag.Parse()
+	if *help {
+		flag.Usage()
+		os.Exit(0)
 	}
+
+	host := flag.String("host", "127.0.0.1", "mysql host")
+	port := flag.Int("port", 4000, "mysql port")
+	user := flag.String("user", "root", "mysql user")
+	password := flag.String("password", "12345678", "mysql password")
+	path := fmt.Sprintf("%s:%s@tcp(%s:%d)/test", *user, *password, *host, *port)
+	conns := flag.Int("conns", 100, "number of long connections")
+	intervalMs := flag.Int("interval", 1000, "interval of short connections (ms)")
+	interval := time.Duration(*intervalMs) * time.Millisecond
+	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
+	slow := time.Duration(*slowThreshold) * time.Millisecond
+
 	db, err := sql.Open("mysql", path)
 	if err != nil {
 		panic(errors.Wrap(err, "open db fails"))
 	}
 	defer db.Close()
-	var wg sync.WaitGroup
-	wg.Add(int(conns) + 1)
 
+	var wg sync.WaitGroup
 	// long connnection
-	for i := 0; i < int(conns); i++ {
+	runLongConn(&wg, db, *conns)
+	// short connection
+	runShortConn(&wg, path, interval, slow)
+	wg.Wait()
+}
+
+func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
+	wg.Add(conns)
+	for i := 0; i < conns; i++ {
 		go func() {
 			defer wg.Done()
 			ticker := time.NewTicker(time.Second)
@@ -59,11 +79,13 @@ func main() {
 			}
 		}()
 	}
+}
 
-	// short connection
+func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration) {
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			db, err := sql.Open("mysql", path)
@@ -76,7 +98,7 @@ func main() {
 				fmt.Println("short connection fails", time.Now(), err)
 			} else {
 				duration := time.Since(startTime)
-				if duration > 200*time.Millisecond {
+				if duration > slow {
 					fmt.Println("short connection too slow", time.Now(), duration)
 				}
 			}
@@ -84,5 +106,4 @@ func main() {
 			<-ticker.C
 		}
 	}()
-	wg.Wait()
 }
