@@ -86,7 +86,7 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 
 func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
 	wg.Add(concurrency + 1)
-	var refused, timeout, deadline atomic.Int32
+	var refused, timeout, deadline, eof, reset, invalid atomic.Int32
 	// print error num by second
 	go func() {
 		defer wg.Done()
@@ -99,6 +99,9 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 			refusedNum := refused.Swap(0)
 			timeoutNum := timeout.Swap(0)
 			deadlineNum := deadline.Swap(0)
+			eofNum := eof.Swap(0)
+			resetNum := reset.Swap(0)
+			invalidNum := invalid.Swap(0)
 			if refusedNum > 0 {
 				sb.WriteString(fmt.Sprintf(" refused %d", refusedNum))
 				shouldLog = true
@@ -111,10 +114,22 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 				sb.WriteString(fmt.Sprintf(" deadline %d", deadlineNum))
 				shouldLog = true
 			}
+			if eofNum > 0 {
+				sb.WriteString(fmt.Sprintf(" eof %d", eofNum))
+				shouldLog = true
+			}
+			if resetNum > 0 {
+				sb.WriteString(fmt.Sprintf(" reset %d", resetNum))
+				shouldLog = true
+			}
+			if invalidNum > 0 {
+				sb.WriteString(fmt.Sprintf(" invalid %d", invalidNum))
+				shouldLog = true
+			}
 			if shouldLog {
 				fmt.Println(sb.String())
-				sb.Reset()
 			}
+			sb.Reset()
 			<-ticker.C
 		}
 	}()
@@ -142,8 +157,14 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 						timeout.Add(1)
 					case strings.Contains(errMsg, "deadline exceeded"):
 						deadline.Add(1)
+					case strings.Contains(errMsg, "unexpected eof"):
+						eof.Add(1)
+					case strings.Contains(errMsg, "reset by peer"):
+						reset.Add(1)
+					case strings.Contains(errMsg, "invalid connection"):
+						invalid.Add(1)
 					default:
-						fmt.Println("short connection fail", time.Now(), err)
+						fmt.Println("short connection fail", time.Now().Format("15:04:05"), err)
 					}
 				}
 				_ = db.Close()
