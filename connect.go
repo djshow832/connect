@@ -87,6 +87,8 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration)
 		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		var errNum, slowNum int
+		var lastSummaryTime time.Time
 		for {
 			db, err := sql.Open("mysql", path)
 			if err != nil {
@@ -95,12 +97,20 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration)
 			startTime := time.Now()
 			err = db.Ping()
 			if err != nil {
-				fmt.Println("short connection fails", time.Now(), err)
+				errNum++
 			} else {
 				duration := time.Since(startTime)
 				if duration > slow {
-					fmt.Println("short connection too slow", time.Now(), duration)
+					slowNum++
 				}
+			}
+			curTime := time.Now()
+			if curTime.Sub(lastSummaryTime) > time.Second {
+				if errNum > 0 || slowNum > 0 {
+					fmt.Println(curTime.Format("15:04:05"), "err", errNum, "slow", slowNum)
+					errNum, slowNum = 0, 0
+				}
+				lastSummaryTime = curTime
 			}
 			_ = db.Close()
 			<-ticker.C
