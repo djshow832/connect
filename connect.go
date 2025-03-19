@@ -96,17 +96,17 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 		for {
 			shouldLog := false
 			sb.WriteString(time.Now().Format("15:04:05"))
-			refusedNum := refused.Load()
+			refusedNum := refused.Swap(0)
+			timeoutNum := timeout.Swap(0)
+			deadlineNum := deadline.Swap(0)
 			if refusedNum > 0 {
 				sb.WriteString(fmt.Sprintf(" refused %d", refusedNum))
 				shouldLog = true
 			}
-			timeoutNum := timeout.Load()
 			if timeoutNum > 0 {
 				sb.WriteString(fmt.Sprintf(" timeout %d", timeoutNum))
 				shouldLog = true
 			}
-			deadlineNum := deadline.Load()
 			if deadlineNum > 0 {
 				sb.WriteString(fmt.Sprintf(" deadline %d", deadlineNum))
 				shouldLog = true
