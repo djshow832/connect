@@ -95,7 +95,9 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration)
 				panic(errors.Wrap(err, "open db fails"))
 			}
 			startTime := time.Now()
-			err = db.Ping()
+			ctx, cancel := context.WithDeadline(context.Background(), startTime.Add(slow))
+			err = db.PingContext(ctx)
+			cancel()
 			if err != nil {
 				errNum++
 			} else {
