@@ -15,6 +15,83 @@ import (
 	"github.com/pkg/errors"
 )
 
+type errType struct {
+	substring string
+	shortName string
+}
+
+var errTypes = []errType{
+	{
+		substring: "connection refused",
+		shortName: "refused",
+	},
+	{
+		substring: "i/o timeout",
+		shortName: "timeout",
+	},
+	{
+		substring: "deadline exceeded",
+		shortName: "deadline",
+	},
+	{
+		substring: "unexpected eof",
+		shortName: "eof",
+	},
+	{
+		substring: "reset by peer",
+		shortName: "reset",
+	},
+	{
+		substring: "invalid connection",
+		shortName: "invalid",
+	},
+	{
+		substring: "slow ping",
+		shortName: "slow",
+	},
+}
+
+type errCounter struct {
+	counters []atomic.Int32
+	sb       strings.Builder
+}
+
+func newErrCounter() *errCounter {
+	return &errCounter{
+		counters: make([]atomic.Int32, len(errTypes)),
+	}
+}
+
+func (c *errCounter) addError(err error) {
+	if err == nil {
+		return
+	}
+	errMsg := strings.ToLower(err.Error())
+	for i, et := range errTypes {
+		if strings.Contains(errMsg, et.substring) {
+			c.counters[i].Add(1)
+			return
+		}
+	}
+	fmt.Println(time.Now().Format("15:04:05"), errMsg)
+}
+
+func (c *errCounter) summary() {
+	c.sb.Reset()
+	c.sb.WriteString(time.Now().Format("15:04:05"))
+	shouldLog := false
+	for i := range c.counters {
+		num := c.counters[i].Swap(0)
+		if num > 0 {
+			c.sb.WriteString(fmt.Sprintf(" %s %d", errTypes[i].shortName, num))
+			shouldLog = true
+		}
+	}
+	if shouldLog {
+		fmt.Println(c.sb.String())
+	}
+}
+
 func main() {
 	host := flag.String("host", "127.0.0.1", "mysql host")
 	port := flag.Int("port", 4000, "mysql port")
@@ -86,50 +163,14 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 
 func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
 	wg.Add(concurrency + 1)
-	var refused, timeout, deadline, eof, reset, invalid atomic.Int32
+	counter := newErrCounter()
 	// print error num by second
 	go func() {
 		defer wg.Done()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		var sb strings.Builder
 		for {
-			shouldLog := false
-			sb.WriteString(time.Now().Format("15:04:05"))
-			refusedNum := refused.Swap(0)
-			timeoutNum := timeout.Swap(0)
-			deadlineNum := deadline.Swap(0)
-			eofNum := eof.Swap(0)
-			resetNum := reset.Swap(0)
-			invalidNum := invalid.Swap(0)
-			if refusedNum > 0 {
-				sb.WriteString(fmt.Sprintf(" refused %d", refusedNum))
-				shouldLog = true
-			}
-			if timeoutNum > 0 {
-				sb.WriteString(fmt.Sprintf(" timeout %d", timeoutNum))
-				shouldLog = true
-			}
-			if deadlineNum > 0 {
-				sb.WriteString(fmt.Sprintf(" deadline %d", deadlineNum))
-				shouldLog = true
-			}
-			if eofNum > 0 {
-				sb.WriteString(fmt.Sprintf(" eof %d", eofNum))
-				shouldLog = true
-			}
-			if resetNum > 0 {
-				sb.WriteString(fmt.Sprintf(" reset %d", resetNum))
-				shouldLog = true
-			}
-			if invalidNum > 0 {
-				sb.WriteString(fmt.Sprintf(" invalid %d", invalidNum))
-				shouldLog = true
-			}
-			if shouldLog {
-				fmt.Println(sb.String())
-			}
-			sb.Reset()
+			counter.summary()
 			<-ticker.C
 		}
 	}()
@@ -145,28 +186,12 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 					panic(errors.Wrap(err, "open db fails"))
 				}
 				startTime := time.Now()
-				ctx, cancel := context.WithDeadline(context.Background(), startTime.Add(slow))
-				err = db.PingContext(ctx)
-				cancel()
-				if err != nil {
-					errMsg := strings.ToLower(err.Error())
-					switch {
-					case strings.Contains(errMsg, "connection refused"):
-						refused.Add(1)
-					case strings.Contains(errMsg, "i/o timeout"):
-						timeout.Add(1)
-					case strings.Contains(errMsg, "deadline exceeded"):
-						deadline.Add(1)
-					case strings.Contains(errMsg, "unexpected eof"):
-						eof.Add(1)
-					case strings.Contains(errMsg, "reset by peer"):
-						reset.Add(1)
-					case strings.Contains(errMsg, "invalid connection"):
-						invalid.Add(1)
-					default:
-						fmt.Println("short connection fail", time.Now().Format("15:04:05"), err)
+				if err = db.Ping(); err == nil {
+					if time.Since(startTime) > slow {
+						err = errors.New("slow ping")
 					}
 				}
+				counter.addError(err)
 				_ = db.Close()
 				<-ticker.C
 			}
