@@ -52,14 +52,18 @@ var errTypes = []errType{
 }
 
 type errCounter struct {
+	name     string
 	counters []atomic.Int32
 	sb       strings.Builder
 }
 
-func newErrCounter() *errCounter {
-	return &errCounter{
+func newErrCounter(name string) *errCounter {
+	counter := &errCounter{
+		name:     name,
 		counters: make([]atomic.Int32, len(errTypes)),
 	}
+	counter.sb.Grow(100)
+	return counter
 }
 
 func (c *errCounter) addError(err error) {
@@ -73,22 +77,33 @@ func (c *errCounter) addError(err error) {
 			return
 		}
 	}
-	fmt.Println(time.Now().Format("15:04:05"), errMsg)
+	fmt.Println(c.name, time.Now().Format("15:04:05"), errMsg)
+}
+
+func (c *errCounter) run(wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			c.summary()
+			<-ticker.C
+		}
+	}()
 }
 
 func (c *errCounter) summary() {
 	c.sb.Reset()
-	c.sb.WriteString(time.Now().Format("15:04:05"))
-	shouldLog := false
 	for i := range c.counters {
 		num := c.counters[i].Swap(0)
 		if num > 0 {
 			c.sb.WriteString(fmt.Sprintf(" %s %d", errTypes[i].shortName, num))
-			shouldLog = true
 		}
 	}
-	if shouldLog {
-		fmt.Println(c.sb.String())
+	errMsg := c.sb.String()
+	if len(errMsg) > 0 {
+		fmt.Println(c.name, time.Now().Format("15:04:05"), c.sb.String())
 	}
 }
 
@@ -117,18 +132,22 @@ func main() {
 	defer db.Close()
 
 	var wg sync.WaitGroup
+	slow := time.Duration(*slowThreshold) * time.Millisecond
 	// long connnection
-	runLongConn(&wg, db, *conns)
+	runLongConn(&wg, db, *conns, slow)
 	// short connection
 	interval := time.Duration(*intervalMs) * time.Millisecond
-	slow := time.Duration(*slowThreshold) * time.Millisecond
 	runShortConn(&wg, path, interval, slow, *concurrency)
 	wg.Wait()
 }
 
-func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
-	wg.Add(conns)
+func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration) {
+	counter := newErrCounter("long")
+	// print error num by second
+	counter.run(wg)
+	// connect and increase error num
 	for i := 0; i < conns; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			ticker := time.NewTicker(time.Second)
@@ -136,7 +155,8 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 			for {
 				conn, err := db.Conn(context.Background())
 				if err != nil {
-					fmt.Println("create connection fails", time.Now(), err)
+					err = errors.New("create fail")
+					counter.addError(err)
 					<-ticker.C
 					continue
 				}
@@ -145,16 +165,17 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 					startTime := time.Now()
 					err = conn.PingContext(context.Background())
 					if err != nil {
-						fmt.Println("long connection fail", time.Now(), err)
-						<-ticker.C
+						counter.addError(err)
 						break
+					} else {
+						duration := time.Since(startTime)
+						if duration > slow {
+							err = errors.New("slow ping")
+							counter.addError(err)
+						}
 					}
-					duration := time.Since(startTime)
-					if duration > 100*time.Millisecond {
-						fmt.Println("long connection too slow", time.Now(), duration)
-					}
-					<-ticker.C
 				}
+				<-ticker.C
 				_ = conn.Close()
 			}
 		}()
@@ -162,20 +183,12 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int) {
 }
 
 func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
-	wg.Add(concurrency + 1)
-	counter := newErrCounter()
+	counter := newErrCounter("short")
 	// print error num by second
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			counter.summary()
-			<-ticker.C
-		}
-	}()
+	counter.run(wg)
 	// connect and increase error num
 	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			ticker := time.NewTicker(interval)
