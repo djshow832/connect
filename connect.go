@@ -54,6 +54,7 @@ var errTypes = []errType{
 type errCounter struct {
 	name     string
 	counters []atomic.Int32
+	success  atomic.Int32
 	sb       strings.Builder
 }
 
@@ -68,6 +69,7 @@ func newErrCounter(name string) *errCounter {
 
 func (c *errCounter) addError(err error) {
 	if err == nil {
+		c.success.Add(1)
 		return
 	}
 	errMsg := strings.ToLower(err.Error())
@@ -102,6 +104,8 @@ func (c *errCounter) summary() {
 		}
 	}
 	errMsg := c.sb.String()
+	success := c.success.Swap(0)
+	c.sb.WriteString(fmt.Sprintf(" success %d", success))
 	if len(errMsg) > 0 {
 		fmt.Println(c.name, time.Now().Format("15:04:05"), c.sb.String())
 	}
