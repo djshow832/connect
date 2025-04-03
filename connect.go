@@ -103,8 +103,8 @@ func (c *errCounter) summary() {
 			c.sb.WriteString(fmt.Sprintf(" %s %d", errTypes[i].shortName, num))
 		}
 	}
+	success := c.success.Swap(0)
 	if c.sb.Len() > 0 {
-		success := c.success.Swap(0)
 		c.sb.WriteString(fmt.Sprintf(" success %d", success))
 		fmt.Println(c.name, time.Now().Format("15:04:05"), c.sb.String())
 	}
