@@ -208,8 +208,8 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 					}
 				}
 				counter.addError(err)
-				_ = db.Close()
 				<-ticker.C
+				_ = db.Close()
 			}
 		}()
 	}
