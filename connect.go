@@ -119,6 +119,7 @@ func main() {
 	intervalMs := flag.Int("interval", 1000, "interval of short connections (ms)")
 	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
 	concurrency := flag.Int("concurrency", 1, "goroutines to create short connections")
+	txn := flag.Bool("txn", true, "execute txn")
 
 	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
@@ -137,14 +138,14 @@ func main() {
 	var wg sync.WaitGroup
 	slow := time.Duration(*slowThreshold) * time.Millisecond
 	// long connnection
-	runLongConn(&wg, db, *conns, slow)
+	runLongConn(&wg, db, *conns, slow, *txn)
 	// short connection
 	interval := time.Duration(*intervalMs) * time.Millisecond
-	runShortConn(&wg, path, interval, slow, *concurrency)
+	runShortConn(&wg, path, interval, slow, *concurrency, *txn)
 	wg.Wait()
 }
 
-func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration) {
+func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration, txn bool) {
 	counter := newErrCounter("long")
 	// print error num by second
 	counter.run(wg)
@@ -173,8 +174,14 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration) 
 					} else {
 						duration := time.Since(startTime)
 						if duration > slow {
+							fmt.Println("long slow", time.Now().Format("15:04:05"), duration)
 							err = errors.New("slow ping")
 							counter.addError(err)
+						}
+						if txn {
+							if err = execTxn(db); err != nil {
+								counter.addError(err)
+							}
 						}
 					}
 				}
@@ -185,7 +192,7 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration) 
 	}
 }
 
-func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int) {
+func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration, concurrency int, txn bool) {
 	counter := newErrCounter("short")
 	// print error num by second
 	counter.run(wg)
@@ -203,14 +210,38 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 				}
 				startTime := time.Now()
 				if err = db.Ping(); err == nil {
-					if time.Since(startTime) > slow {
+					duration := time.Since(startTime)
+					if duration > slow {
+						fmt.Println("short slow", time.Now().Format("15:04:05"), duration)
 						err = errors.New("slow ping")
 					}
+					counter.addError(err)
+					if txn {
+						if err = execTxn(db); err != nil {
+							counter.addError(err)
+						}
+					}
+				} else {
+					counter.addError(err)
 				}
-				counter.addError(err)
 				<-ticker.C
 				_ = db.Close()
 			}
 		}()
 	}
+}
+
+func execTxn(db *sql.DB) error {
+	txn, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	rows, err := txn.Query("select * from information_schema.processlist")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+	}
+	_ = rows.Close()
+	return txn.Commit()
 }
