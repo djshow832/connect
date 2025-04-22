@@ -181,6 +181,7 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration, 
 						if txn {
 							if err = execTxn(db); err != nil {
 								counter.addError(err)
+								break
 							}
 						}
 					}
