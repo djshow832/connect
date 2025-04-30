@@ -237,7 +237,7 @@ func execTxn(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	rows, err := txn.Query("select * from information_schema.processlist")
+	rows, err := txn.Query("select repeat('a', 512)")
 	if err != nil {
 		return err
 	}
