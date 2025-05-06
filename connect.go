@@ -136,16 +136,16 @@ func main() {
 	defer db.Close()
 
 	var wg sync.WaitGroup
+	interval := time.Duration(*intervalMs) * time.Millisecond
 	slow := time.Duration(*slowThreshold) * time.Millisecond
 	// long connnection
-	runLongConn(&wg, db, *conns, slow, *txn)
+	runLongConn(&wg, db, *conns, interval, slow, *txn)
 	// short connection
-	interval := time.Duration(*intervalMs) * time.Millisecond
 	runShortConn(&wg, path, interval, slow, *concurrency, *txn)
 	wg.Wait()
 }
 
-func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration, txn bool) {
+func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, interval, slow time.Duration, txn bool) {
 	counter := newErrCounter("long")
 	// print error num by second
 	counter.run(wg)
@@ -154,7 +154,7 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration, 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ticker := time.NewTicker(time.Second)
+			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {
 				conn, err := db.Conn(context.Background())
@@ -185,6 +185,7 @@ func runLongConn(wg *sync.WaitGroup, db *sql.DB, conns int, slow time.Duration, 
 							}
 						}
 					}
+					<-ticker.C
 				}
 				<-ticker.C
 				_ = conn.Close()
