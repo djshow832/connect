@@ -119,6 +119,7 @@ func main() {
 	intervalMs := flag.Int("interval", 1000, "interval of short connections (ms)")
 	slowThreshold := flag.Int("slow", 100, "slow threshold (ms)")
 	concurrency := flag.Int("concurrency", 1, "goroutines to create short connections")
+	newInterval := flag.Int("new", 1000, "interval of creating new connections (ms) to check connectivity")
 	txn := flag.Bool("txn", true, "execute txn")
 
 	help := flag.Bool("help", false, "show the usage")
@@ -138,10 +139,13 @@ func main() {
 	var wg sync.WaitGroup
 	interval := time.Duration(*intervalMs) * time.Millisecond
 	slow := time.Duration(*slowThreshold) * time.Millisecond
+	new := time.Duration(*newInterval) * time.Millisecond
 	// long connnection
 	runLongConn(&wg, db, *conns, interval, slow, *txn)
 	// short connection
 	runShortConn(&wg, path, interval, slow, *concurrency, *txn)
+	// new connection
+	runNewConn(&wg, path, new, slow)
 	wg.Wait()
 }
 
@@ -230,6 +234,39 @@ func runShortConn(wg *sync.WaitGroup, path string, interval, slow time.Duration,
 				_ = db.Close()
 			}
 		}()
+	}
+}
+
+// If the short connections hang on creating connections for 10s, the connectivity during this 10s can not be checked.
+// So always run a periodical check.
+func runNewConn(wg *sync.WaitGroup, path string, interval, slow time.Duration) {
+	counter := newErrCounter("short")
+	// print error num by second
+	counter.run(wg)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			db, err := sql.Open("mysql", path)
+			if err != nil {
+				panic(errors.Wrap(err, "open db fails"))
+			}
+			startTime := time.Now()
+			if err = db.Ping(); err == nil {
+				duration := time.Since(startTime)
+				if duration > slow {
+					fmt.Println("new slow", time.Now().Format("15:04:05"), duration)
+					err = errors.New("slow ping")
+				}
+				counter.addError(err)
+			} else {
+				counter.addError(err)
+			}
+			_ = db.Close()
+		}()
+		<-ticker.C
 	}
 }
 
